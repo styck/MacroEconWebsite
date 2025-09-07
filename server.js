@@ -1,10 +1,15 @@
+require('dotenv').config();
 const express = require('express');
 const fetch = globalThis.fetch || require('node-fetch@2');
 
 const app = express();
 const PORT = 3000;
 const FRED_API_BASE = 'https://api.stlouisfed.org/fred/series/observations';
-const API_KEY = 'ADD YOUR API KEY'; // User's key
+const API_KEY = process.env.FRED_API_KEY;
+
+if (!API_KEY) {
+  throw new Error("FRED_API_KEY is not set. Please create a .env file and add your API key.");
+}
 
 app.get('/api/fetch', async (req, res) => {
   const seriesId = req.query.series_id;

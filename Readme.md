@@ -35,11 +35,15 @@ This tool is useful for anyone interested in economics, finance, or investing. I
     ```bash
     npm install
     ```
-2.  **Start the server:**
+2.  **Set up your environment variables:**
+    -   Create a new file named `.env` in the root of the project.
+    -   Open the `.env.example` file and copy its content into your new `.env` file.
+    -   Replace `your_api_key_here` with your actual FRED API key.
+3.  **Start the server:**
     ```bash
     node server.js
     ```
-3.  **Open the dashboard:**
+4.  **Open the dashboard:**
     Open your web browser and navigate to `http://localhost:3000`.
 
 The dashboard will load the latest data automatically. You can click the "Refresh Data" button to fetch the most recent data from the FRED API.
