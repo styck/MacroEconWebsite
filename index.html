@@ -1,0 +1,388 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Live Macro Regime Dashboard</title>
+    <style>
+        body { font-family: Arial, sans-serif; margin: 20px; background-color: #f4f4f4; }
+        h1 { color: #333; text-align: center; }
+        .section { margin-bottom: 30px; background: white; padding: 20px; border-radius: 8px; box-shadow: 0 2px 5px rgba(0,0,0,0.1); }
+        table { width: 100%; border-collapse: collapse; margin-top: 10px; }
+        th, td { border: 1px solid #ddd; padding: 12px; text-align: center; }
+        th { background-color: #f2f2f2; }
+        .green { background-color: #d4edda; }
+        .amber { background-color: #fff3cd; }
+        .red { background-color: #f8d7da; }
+        #probabilities { display: flex; gap: 10px; text-align: center; }
+        .regime-prob { flex: 1; padding: 10px; border-radius: 5px; color: white; }
+        .soft-landing { background-color: #28a745; }
+        .stagflation { background-color: #ffc107; }
+        .recession { background-color: #dc3545; }
+        .reflation { background-color: #007bff; }
+        pre { background: #f8f8f8; padding: 10px; overflow-x: auto; }
+    </style>
+</head>
+<body>
+    <h1>Live Macro Regime Dashboard</h1>
+    <p id="last-update">Last Update: Loading...</p>
+    <button onclick="loadData()">Refresh Data</button>
+
+    <div class="section">
+        <h2>Regime Probabilities</h2>
+        <div id="probabilities"></div>
+        <table id="prob-table">
+            <tr><th>Regime</th><th>Probability</th><th>Primary Drivers</th></tr>
+        </table>
+    </div>
+
+    <div class="section">
+        <h2>Key Indicators</h2>
+        <table id="indicators-table">
+            <tr><th>Indicator</th><th>Value</th><th>Z-Score</th><th>Status</th><th>Source & Date</th></tr>
+        </table>
+    </div>
+
+    <div class="section">
+        <h2>Portfolio Tilt Suggestions</h2>
+        <table id="portfolio-table">
+            <tr><th>Regime</th><th>Suggestion</th></tr>
+        </table>
+    </div>
+
+    <div class="section">
+        <h2>Alerts</h2>
+        <ul id="alerts-list"></ul>
+    </div>
+
+    <div class="section">
+        <h2>Narrative Summary</h2>
+        <ul id="narrative-list"></ul>
+    </div>
+
+    <div class="section">
+        <h2>Generated Markdown</h2>
+        <pre id="markdown-output"></pre>
+    </div>
+
+    <script>
+        // API endpoints using local proxy
+        const apis = {
+            fredBase: '/api/fetch',
+            useMock: false  // Set to false to use real data via proxy
+        };
+
+        const indicators = [
+            { name: 'OECD Composite Leading Indicator', block: 'Growth', seriesId: 'USALOLITONOSTSAM' },
+            { name: 'Producer Price Index (PPI)', block: 'Inflation', seriesId: 'WPUFD49207' },
+            { name: 'Consumer Price Index (CPI)', block: 'Inflation', seriesId: 'CPIAUCSL' },
+            { name: 'Real GDP', block: 'Growth', seriesId: 'GDPC1' },
+            { name: 'Industrial Production', block: 'Growth', seriesId: 'INDPRO' },
+            { name: 'Retail Sales', block: 'Growth', seriesId: 'RSAFS' },
+            { name: 'Nonfarm Payrolls', block: 'Growth', seriesId: 'PAYEMS' },
+            { name: 'Unemployment Rate', block: 'Growth', seriesId: 'UNRATE' },
+            { name: 'Average Hourly Earnings', block: 'Inflation', seriesId: 'CES0500000003' },
+            { name: '5y5y Forward Inflation Expectations', block: 'Inflation', seriesId: 'T5YIE' },
+            { name: 'Treasury Yields (10Y)', block: 'Policy & Liquidity', seriesId: 'DGS10' },
+            { name: 'Yield Curve Spread (10Y-2Y)', block: 'Policy & Liquidity', seriesId: null }, // Computed DGS10 - DGS2
+            { name: 'RRP Usage', block: 'Policy & Liquidity', seriesId: 'RRPONTSYD' },
+            { name: 'Fed Balance Sheet', block: 'Policy & Liquidity', seriesId: 'WALCL' },
+            { name: 'HY/IG Credit Spread', block: 'Risk & Credit', seriesId: 'BAMLH0A0HYM2' } // HY, IG could be BAMLH0A2HYBEY
+        ];
+
+        function calculateZScore(value, history) {
+            if (history.length === 0 || isNaN(value)) return 0;
+            const mean = history.reduce((sum, val) => sum + val, 0) / history.length;
+            const variance = history.reduce((sum, val) => sum + Math.pow(val - mean, 2), 0) / history.length;
+            const std = Math.sqrt(variance);
+            return std === 0 ? 0 : (value - mean) / std;
+        }
+
+        function softmax(scores) {
+            const maxScore = Math.max(...scores);
+            const exps = scores.map(score => Math.exp(score - maxScore));
+            const sumExps = exps.reduce((sum, exp) => sum + exp, 0);
+            return exps.map(exp => exp / sumExps);
+        }
+
+        async function fetchSeries(seriesId, startDate = '2014-01-01', endDate = '2025-12-31') {
+            const url = `${apis.fredBase}?series_id=${seriesId}&start_date=${startDate}&end_date=${endDate}`;
+            console.log('Fetching', url);
+            try {
+                const response = await fetch(url);
+                if (!response.ok) {
+                    throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+                }
+                const data = await response.json();
+                console.log('Data for', seriesId, data.observations.length, 'observations');
+                return data.observations.map(obs => ({ date: obs.date, value: parseFloat(obs.value) })).filter(obs => !isNaN(obs.value));
+            } catch (e) {
+                console.error('Failed to fetch', seriesId, e);
+                throw e;
+            }
+        }
+
+        async function fetchData() {
+            const data = {};
+            const startDate = new Date();
+            startDate.setFullYear(startDate.getFullYear() - 10);
+            const startStr = startDate.toISOString().split('T')[0];
+
+            for (const ind of indicators) {
+                if (ind.seriesId) {
+                    const obs = await fetchSeries(ind.seriesId, startStr);
+                    if (obs.length > 0) {
+                        const latest = obs[obs.length - 1];
+                        const historyValues = obs.slice(-120).map(o => o.value); // Last 120 points
+                        data[ind.name] = {
+                            value: latest.value,
+                            history: historyValues,
+                            source: `FRED, ${latest.date}`,
+                            available: true
+                        };
+                    } else {
+                        data[ind.name] = { available: false };
+                    }
+                } else {
+                    data[ind.name] = { available: false };
+                }
+            }
+
+            // Compute Yield Curve Spread
+            const gs10Obs = await fetchSeries('DGS10', startStr);
+            const gs2Obs = await fetchSeries('DGS2', startStr);
+            if (gs10Obs.length > 0 && gs2Obs.length > 0) {
+                const len = Math.min(gs10Obs.length, gs2Obs.length);
+                const latest = gs10Obs[len-1].value - gs2Obs[len-1].value;
+                const historySpread = [];
+                for (let i = 0; i < len; i++) {
+                    historySpread.push(gs10Obs[i].value - gs2Obs[i].value);
+                }
+                data['Yield Curve Spread (10Y-2Y)'] = {
+                    value: latest,
+                    history: historySpread.slice(-120),
+                    source: `FRED, ${gs10Obs[len-1].date}`,
+                    available: true
+                };
+            }
+
+            // For unavailable
+            for (const ind of indicators) {
+                if (!data[ind.name]) {
+                    data[ind.name] = { available: false };
+                }
+            }
+
+            return data;
+        }
+
+        async function loadData() {
+            try {
+                let data;
+                if (apis.useMock) {
+                    // Mock data
+                } else {
+                    data = await fetchData();
+                }
+                processData(data);
+            } catch (e) {
+                console.error('Error loading data', e);
+                document.getElementById('last-update').textContent = 'Error loading data. Check console.';
+            }
+        }
+
+        function processData(data) {
+            console.log('Raw data from fetch:', data);
+            const processedIndicators = indicators.map(ind => {
+                if (!data[ind.name] || !data[ind.name].available) {
+                    return { ...ind, value: NaN, zScore: 0, source: 'Unavailable' };
+                } else {
+                    return {
+                        ...ind,
+                        value: data[ind.name].value,
+                        zScore: calculateZScore(data[ind.name].value, data[ind.name].history || []),
+                        source: data[ind.name].source
+                    };
+                }
+            });
+            console.log('Processed indicators:', processedIndicators.map(ind => `${ind.name}: value=${ind.value}, z=${ind.zScore}, source=${ind.source}`));
+
+            // Calculate block averages with weights
+            const blockWeights = { Growth: 0.3, Inflation: 0.25, 'Policy & Liquidity': 0.25, 'Risk & Credit': 0.2 };
+            const blockGroups = { Growth: [], Inflation: [], 'Policy & Liquidity': [], 'Risk & Credit': [] };
+            processedIndicators.forEach(ind => {
+                blockGroups[ind.block].push(ind.zScore);
+            });
+            const blockAverages = {};
+            for (const block in blockGroups) {
+                const avg = blockGroups[block].reduce((sum, z) => sum + z, 0) / blockGroups[block].length;
+                blockAverages[block] = avg * blockWeights[block];
+            }
+
+            // Score regimes based on patterns
+            const regimes = ['Soft Landing', 'Stagflation', 'Recession', 'Reflation'];
+            const scores = [
+                blockAverages.Growth + blockAverages.Inflation * -1 + blockAverages['Policy & Liquidity'] * -1, // Positive growth, easing inflation, liquidity
+                blockAverages.Growth * -1 + blockAverages.Inflation + blockAverages['Policy & Liquidity'] * -1, // Negative growth, sticky inflation, constrained policy
+                blockAverages.Growth * -1 + blockAverages.Inflation * -1 + blockAverages['Policy & Liquidity'] + blockAverages['Risk & Credit'], // Negative growth, falling inflation, easing policy, rising credit risk
+                blockAverages.Growth + blockAverages.Inflation + blockAverages['Policy & Liquidity'] + blockAverages['Risk & Credit'] * -1 // Accelerating growth, rising inflation, liquidity expansion, easing credit
+            ];
+            const probabilities = softmax(scores);
+
+            // Display data
+            updateUI(processedIndicators, probabilities, regimes, blockAverages);
+            updateMarkdown(processedIndicators, probabilities, regimes, blockAverages);
+            console.log('Regime probabilities:', regimes.map((r, i) => `${r}: ${(probabilities[i]*100).toFixed(1)}%`));
+        }
+
+        function calculatePrimaryDrivers(indicators, blockAverages) {
+            const drivers = {
+                'Soft Landing': [],
+                'Stagflation': [],
+                'Recession': [],
+                'Reflation': []
+            };
+            indicators.forEach(ind => {
+                if (ind.zScore > 1 || ind.zScore < -1) {
+                    if (ind.block === 'Growth' && ind.zScore > 0.5) drivers['Soft Landing'].push(ind.name);
+                    if (ind.block === 'Inflation' && ind.zScore < -0.5) drivers['Soft Landing'].push(ind.name);
+                    if (ind.block === 'Growth' && ind.zScore < -0.5) drivers['Stagflation'].push(ind.name);
+                    if (ind.block === 'Inflation' && ind.zScore > 0.5) drivers['Stagflation'].push(ind.name);
+                    if (ind.block === 'Growth' && ind.zScore < -0.5) drivers['Recession'].push(ind.name);
+                    if (ind.name === 'Unemployment Rate' && ind.zScore > 0.5) drivers['Recession'].push(ind.name);
+                    if (ind.block === 'Growth' && ind.zScore > 0.5) drivers['Reflation'].push(ind.name);
+                    if (ind.block === 'Inflation' && ind.zScore > 0.5) drivers['Reflation'].push(ind.name);
+                    if (ind.block === 'Policy & Liquidity' && ind.zScore > 0.5) drivers['Reflation'].push(ind.name);
+                }
+            });
+            return drivers;
+        }
+
+        function calculateAlerts(indicators) {
+            const alerts = [];
+            const yieldCurve = indicators.find(ind => ind.name === 'Yield Curve Spread (10Y-2Y)');
+            const creditSpread = indicators.find(ind => ind.name === 'HY/IG Credit Spread');
+            if (yieldCurve && yieldCurve.zScore > 1.5) alerts.push('Yield curve inversion detected: potential recession risk.');
+            if (creditSpread && creditSpread.zScore > 2) alerts.push('High credit spread: elevated risk of liquidity shock.');
+            if (alerts.length === 0) alerts.push('No alerts triggered.');
+            return alerts;
+        }
+
+        function generateNarrative(probs, regimes, blockAverages, indicators) {
+            const maxProbIndex = probs.indexOf(Math.max(...probs));
+            const dominantRegime = regimes[maxProbIndex];
+            const growthAvg = blockAverages.Growth / 0.3;
+            const infAvg = blockAverages.Inflation / 0.25;
+            const bullet1 = growthAvg > 0.5 ? 'Growth is accelerating' : growthAvg < -0.5 ? 'Growth is decelerating' : 'Growth is moderate';
+            const bullet2 = infAvg > 0.5 ? 'Inflation pressures are increasing' : infAvg < -0.5 ? 'Inflation is easing' : 'Inflation is stable';
+            const bullet3 = dominantRegime === 'Soft Landing' ? 'Bias towards soft landing with accommodating policy.' : dominantRegime === 'Stagflation' ? 'Risk of stagflation if inflation sticky.' : dominantRegime === 'Recession' ? 'Elevated recession risk amid slowing growth.' : 'Opportunity for reflation with liquidity expansion.';
+            return [bullet1 + '.', bullet2 + '.', bullet3];
+        }
+
+        function generatePortfolioSuggestions(regimes) {
+            const suggestions = {
+                'Soft Landing': 'Overweight equities, maintain balanced bonds.',
+                'Stagflation': 'Tilt to commodities and TIPS.',
+                'Recession': 'Increase cash and high-quality bonds.',
+                'Reflation': 'Exposure to cyclical stocks and inflation-linked assets.'
+            };
+            const result = [];
+            regimes.forEach(reg => result.push(suggestions[reg] || 'Adjust portfolio for ' + reg.toLowerCase()));
+            return result;
+        }
+
+        function updateUI(indicators, probs, regimes, blockAverages) {
+            document.getElementById('last-update').textContent = `Last Update: ${new Date().toLocaleString()}`;
+
+            const drivers = calculatePrimaryDrivers(indicators, blockAverages);
+            const alerts = calculateAlerts(indicators);
+            const narrative = generateNarrative(probs, regimes, blockAverages, indicators);
+            const portfolio = generatePortfolioSuggestions(regimes);
+
+            // Probabilities table with visual
+            const probDiv = document.getElementById('probabilities');
+            probDiv.innerHTML = '';
+            regimes.forEach((reg, i) => {
+                const bar = document.createElement('div');
+                bar.className = `regime-prob ${reg.toLowerCase().replace(' ', '-')}`;
+                bar.textContent = `${reg}: ${(probs[i] * 100).toFixed(1)}%`;
+                probDiv.appendChild(bar);
+            });
+
+            const probTable = document.getElementById('prob-table');
+            probTable.innerHTML = '<tr><th>Regime</th><th>Probability</th><th>Primary Drivers</th></tr>';
+            regimes.forEach((reg, i) => {
+                const row = probTable.insertRow();
+                row.insertCell().textContent = reg;
+                row.insertCell().textContent = (probs[i] * 100).toFixed(1) + '%';
+                row.insertCell().textContent = drivers[reg].length > 0 ? drivers[reg].join(', ') : 'None';
+            });
+
+            // Indicators table
+            const indTable = document.getElementById('indicators-table');
+            indTable.innerHTML = '<tr><th>Indicator</th><th>Value</th><th>Z-Score</th><th>Status</th><th>Source & Date</th></tr>';
+            indicators.forEach(ind => {
+                const status = ind.zScore > 1 ? 'Red' : ind.zScore < -1 ? 'Green' : 'Amber';
+                const row = indTable.insertRow();
+                row.insertCell().textContent = ind.name;
+                row.insertCell().textContent = ind.value;
+                row.insertCell().textContent = ind.zScore.toFixed(2);
+                row.insertCell().textContent = status;
+                row.cells[3].classList.add(status.toLowerCase());
+                row.insertCell().textContent = ind.source;
+            });
+
+            // Portfolio table
+            const portTable = document.getElementById('portfolio-table');
+            portTable.innerHTML = '<tr><th>Regime</th><th>Suggestion</th></tr>';
+            regimes.forEach((reg, i) => {
+                const row = portTable.insertRow();
+                row.insertCell().textContent = reg;
+                row.insertCell().textContent = portfolio[i];
+            });
+
+            // Alerts
+            const alertsUl = document.getElementById('alerts-list');
+            alertsUl.innerHTML = '';
+            alerts.forEach(alert => {
+                const li = document.createElement('li');
+                li.textContent = alert;
+                alertsUl.appendChild(li);
+            });
+
+            // Narrative
+            const narrativeUl = document.getElementById('narrative-list');
+            narrativeUl.innerHTML = '';
+            narrative.forEach(bullet => {
+                const li = document.createElement('li');
+                li.textContent = bullet;
+                narrativeUl.appendChild(li);
+            });
+        }
+
+        function updateMarkdown(indicators, probs, regimes, blockAverages) {
+            const drivers = calculatePrimaryDrivers(indicators, blockAverages);
+            const alerts = calculateAlerts(indicators);
+            const narrative = generateNarrative(probs, regimes, blockAverages, indicators);
+            const portfolio = generatePortfolioSuggestions(regimes);
+
+            let md = '## Macro Regime Dashboard\n\n### Regime Probabilities\n| Regime | Probability | Primary Drivers |\n|--------|-------------|----------------|\n';
+            regimes.forEach((reg, i) => md += `| ${reg} | ${(probs[i] * 100).toFixed(1)}% | ${drivers[reg].length > 0 ? drivers[reg].join(', ') : 'None'} |\n`);
+            md += '\n### Key Indicators\n| Indicator | Value | Z-Score | Status | Source & Date |\n|-----------|-------|---------|--------|---------------|\n';
+            indicators.forEach(ind => {
+                const status = ind.zScore > 1 ? 'Red' : ind.zScore < -1 ? 'Green' : 'Amber';
+                md += `| ${ind.name} | ${ind.value} | ${ind.zScore.toFixed(2)} | ${status} | ${ind.source} |\n`;
+            });
+            md += '\n### Portfolio Tilt Suggestions\n| Regime | Suggestion |\n|--------|------------|\n';
+            regimes.forEach((reg, i) => md += `| ${reg} | ${portfolio[i]} |\n`);
+            md += '\n### Alerts\n';
+            alerts.forEach(alert => md += `- ${alert}\n`);
+            md += '\n### Narrative Summary\n';
+            narrative.forEach(bullet => md += `- ${bullet}\n`);
+            document.getElementById('markdown-output').textContent = md;
+        }
+
+        loadData();
+    </script>
+</body>
+</html>
