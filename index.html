@@ -73,7 +73,7 @@
         };
 
         const indicators = [
-            { name: 'OECD Composite Leading Indicator', block: 'Growth', seriesId: 'USALOLITONOSTSAM' },
+            { name: 'Chicago Fed National Activity Index', block: 'Growth', seriesId: 'CFNAIMA3' },
             { name: 'Producer Price Index (PPI)', block: 'Inflation', seriesId: 'WPUFD49207' },
             { name: 'Consumer Price Index (CPI)', block: 'Inflation', seriesId: 'CPIAUCSL' },
             { name: 'Real GDP', block: 'Growth', seriesId: 'GDPC1' },
@@ -81,13 +81,15 @@
             { name: 'Retail Sales', block: 'Growth', seriesId: 'RSAFS' },
             { name: 'Nonfarm Payrolls', block: 'Growth', seriesId: 'PAYEMS' },
             { name: 'Unemployment Rate', block: 'Growth', seriesId: 'UNRATE' },
+            { name: 'Initial Jobless Claims', block: 'Growth', seriesId: 'IC4WSA' },
             { name: 'Average Hourly Earnings', block: 'Inflation', seriesId: 'CES0500000003' },
             { name: '5y5y Forward Inflation Expectations', block: 'Inflation', seriesId: 'T5YIE' },
             { name: 'Treasury Yields (10Y)', block: 'Policy & Liquidity', seriesId: 'DGS10' },
             { name: 'Yield Curve Spread (10Y-2Y)', block: 'Policy & Liquidity', seriesId: null }, // Computed DGS10 - DGS2
             { name: 'RRP Usage', block: 'Policy & Liquidity', seriesId: 'RRPONTSYD' },
             { name: 'Fed Balance Sheet', block: 'Policy & Liquidity', seriesId: 'WALCL' },
-            { name: 'HY/IG Credit Spread', block: 'Risk & Credit', seriesId: 'BAMLH0A0HYM2' } // HY, IG could be BAMLH0A2HYBEY
+            { name: 'HY/IG Credit Spread', block: 'Risk & Credit', seriesId: 'BAMLH0A0HYM2' }, // HY, IG could be BAMLH0A2HYBEY
+            { name: 'VIX Index', block: 'Risk & Credit', seriesId: 'VIXCLS' }
         ];
 
         function calculateZScore(value, history) {

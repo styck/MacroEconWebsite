@@ -3,7 +3,7 @@
 
 # Live Macro Regime Dashboard
 
-This project is a web-based dashboard that provides a real-time view of the current macroeconomic regime. It fetches key economic indicators from the Federal Reserve Economic Data (FRED) API, analyzes them, and calculates the probabilities of four different macroeconomic regimes: Soft Landing, Stagflation, Recession, and Reflation.
+This project is a web-based dashboard that provides a near-real-time view of the current macroeconomic regime. It fetches key economic indicators from the Federal Reserve Economic Data (FRED) API, analyzes them, and calculates the probabilities of four different macroeconomic regimes: Soft Landing, Stagflation, Recession, and Reflation.
 
 ## What it does
 
